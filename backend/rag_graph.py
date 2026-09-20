@@ -3,7 +3,7 @@ import sqlite3
 import warnings
 from typing import Annotated
 
-warnings.filterwarnings("ignore", message="The default value of `allowed objects`")
+warnings.filterwarnings("ignore", message="The default value of `allowed_objects`")
 
 from dotenv import load_dotenv
 from langchain_core.documents import Document
@@ -23,9 +23,11 @@ from backend.vector_store import search as vs_search
 
 load_dotenv()
 
-llm = ChatOpenAI(model= "gpt-5.4-mini")
+llm = ChatOpenAI(model="gpt-5.4-mini")
 
-# ==================== State ==================== #
+
+# ==================== State ====================
+
 class RAGState(MessagesState):
     session_id: str
     query: str
@@ -39,7 +41,9 @@ class RAGState(MessagesState):
     is_relevant: bool | None
     rewrite_count: int
 
-# ==================== Router ==================== #
+
+# ==================== Router ====================
+
 ROUTER_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
@@ -66,66 +70,74 @@ ROUTER_PROMPT = ChatPromptTemplate.from_messages([
 
 router_chain = ROUTER_PROMPT | llm.with_structured_output(RouterDecision)
 
-def router_node(state: RAGState) -> dict:
-    query = state['messages'][-1].content
-    decision: RouterDecision = router_chain.invoke({"query" : query})
-    return {"route" : decision.route}
 
-# ==================== Tool Schemas ==================== #
+def router_node(state: RAGState) -> dict:
+    query = state["messages"][-1].content
+    decision: RouterDecision = router_chain.invoke({"query": query})
+    return {"route": decision.route}
+
+
+# ==================== Tool schemas ====================
+
 class RetrieverInput(BaseModel):
-    query: str = Field(description = "Semantic query to search research paper chunks")
+    query: str = Field(description="Semantic query to search research paper chunks")
     k: int = Field(default=4, ge=1, le=10, description="Number of chunks to retrieve")
 
+
 class WebSearchInput(BaseModel):
-    optimized_query: str = Field(description= "Query rewritten and optimized for web search")
+    optimized_query: str = Field(description="Query rewritten and optimized for web search")
     max_results: int = Field(default=3, ge=1, le=10, description="Number of web results to return")
 
 
-# ==================== Tools ==================== #
+# ==================== Tools ====================
+
 @tool(args_schema=RetrieverInput)
 def retrieve_from_vectorstore(
     query: str,
     k: int,
     session_id: Annotated[str, InjectedState("session_id")],
     current_docs: Annotated[list, InjectedState("retrieved_docs")],
-    tool_call_id: Annotated[str, InjectedToolCallId]
+    tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> list:
     """Search the uploaded research paper vector store for relevant passages."""
     docs = vs_search(query=query, session_id=session_id, k=k)
     if not docs:
-        return [ToolMessage(content= "No relevant documents found in the vector store.", tool_call_id= tool_call_id)]
-    summary = f"Retrieved {len(docs)} chunk(s) from the vector store"
+        return [ToolMessage(content="No relevant documents found in the vector store.", tool_call_id=tool_call_id)]
+    summary = f"Retrieved {len(docs)} chunk(s) from the vector store."
     return [
-        ToolMessage(content= summary, tool_call_id=tool_call_id),
-        Command(update={"retrieved_docs": (current_docs or []) + docs})
+        ToolMessage(content=summary, tool_call_id=tool_call_id),
+        Command(update={"retrieved_docs": (current_docs or []) + docs}),
     ]
+
 
 @tool(args_schema=WebSearchInput)
 def web_search(
     optimized_query: str,
     max_results: int,
     current_docs: Annotated[list, InjectedState("retrieved_docs")],
-    tool_call_id: Annotated[str, InjectedToolCallId]
+    tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> list:
     """Search the web for current or supplementary information using Tavily."""
     client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
     results = client.search(optimized_query, max_results=max_results)
     if not results.get("results"):
-        return [ToolMessage(content= "No web results found.", tool_call_id=tool_call_id)]
+        return [ToolMessage(content="No web results found.", tool_call_id=tool_call_id)]
     web_docs = [
         Document(
-            page_content= r["content"],
-            metadata = {"url": r["url"], "title": r.get("title", "Web Result")}
+            page_content=r["content"],
+            metadata={"url": r["url"], "title": r.get("title", "Web Result")},
         )
         for r in results["results"]
     ]
     summary = f"Found {len(web_docs)} web result(s) for: {optimized_query}"
     return [
         ToolMessage(content=summary, tool_call_id=tool_call_id),
-        Command(update={"retrieved_docs": (current_docs or []) + web_docs})
+        Command(update={"retrieved_docs": (current_docs or []) + web_docs}),
     ]
 
-# ==================== Retrieval agent singletons ==================== #
+
+# ==================== Retrieval agent singletons ====================
+
 RETRIEVAL_TOOLS = [retrieve_from_vectorstore, web_search]
 retrieval_llm = llm.bind_tools(RETRIEVAL_TOOLS, parallel_tool_calls=False)
 base_tool_node = ToolNode(RETRIEVAL_TOOLS)
@@ -149,7 +161,8 @@ RETRIEVE_SYSTEM = (
 )
 
 
-# ==================== Retrieval agent singletons ==================== #
+# ==================== Relevancy check ====================
+
 RELEVANCY_CHECK_SYSTEM = (
     "You are evaluating whether retrieved document chunks are relevant enough "
     "to answer a user's question about research papers.\n\n"
@@ -169,7 +182,9 @@ QUERY_REWRITE_SYSTEM = (
     "Return ONLY the rewritten query as plain text. No explanation, no preamble."
 )
 
-# ==================== Nodes ==================== #
+
+# ==================== Nodes ====================
+
 def agent_node(state: RAGState) -> dict:
     current_attempts = state.get("retrieval_attempts", 0)
     # Once at the cap, use plain LLM so the agent cannot emit more tool calls.
@@ -177,7 +192,7 @@ def agent_node(state: RAGState) -> dict:
     # retrieval llm --> tool call --> tool result
     # llm --> no tools are bounded --> tool call
     lm = llm if current_attempts >= MAX_RETRIEVAL_ATTEMPTS else retrieval_llm
-    messages = [{"role": " system", "content": RETRIEVE_SYSTEM}] + state["messages"]
+    messages = [{"role": "system", "content": RETRIEVE_SYSTEM}] + state["messages"]
     response = lm.invoke(messages)
     updates: dict = {"messages": [response]}
     if getattr(response, "tool_calls", None):
@@ -186,8 +201,8 @@ def agent_node(state: RAGState) -> dict:
 
 
 def relevancy_check_node(state: RAGState) -> dict:
-    query = state['query']
-    docs = state.get['retrieved_docs'] or []
+    query = state["query"]
+    docs = state.get("retrieved_docs") or []
     doc_snippets = "\n\n---\n\n".join(doc.page_content[:300] for doc in docs[:3])
     if not doc_snippets:
         return {"is_relevant": False}
@@ -196,8 +211,8 @@ def relevancy_check_node(state: RAGState) -> dict:
         "Are these chunks relevant to answering the question?"
     )
     decision: RelevancyDecision = relevancy_llm.invoke([
-        {"role": "system", "content" : RELEVANCY_CHECK_SYSTEM},
-        {"role": "user", "content": prompt}
+        {"role": "system", "content": RELEVANCY_CHECK_SYSTEM},
+        {"role": "user", "content": prompt},
     ])
     return {"is_relevant": decision.is_relevant}
 
@@ -207,17 +222,18 @@ def query_rewrite_node(state: RAGState) -> dict:
     rewrite_count = state.get("rewrite_count", 0)
     response = llm.invoke([
         {"role": "system", "content": QUERY_REWRITE_SYSTEM},
-        {"role": "user", "content": f"Original query: {original_query}\n\nWrite an improved search query."}
+        {"role": "user", "content": f"Original query: {original_query}\n\nWrite an improved search query."},
     ])
     rewritten = response.content.strip()
     return {
-        "messages" : [HumanMessage(content= rewritten)],
-        "query" : rewritten,
+        "messages": [HumanMessage(content=rewritten)],
+        "query": rewritten,
         "retrieved_docs": [],
         "retrieval_attempts": 0,
-        "rewrite_count": rewrite_count +1,
-        "is_relevant" : None,
+        "rewrite_count": rewrite_count + 1,
+        "is_relevant": None,
     }
+
 
 CLAIM_ANALYSIS_PROMPT = (
     "You are a research fact-checker. Given a claim from a research paper and "
@@ -236,7 +252,7 @@ verification_llm = llm.with_structured_output(ClaimVerificationResult)
 
 
 def verify_claim_node(state: RAGState) -> dict:
-    claim = state['messages'][-1].content
+    claim = state["messages"][-1].content
     tavily_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
 
     # General web search for recent work superseding the claim
@@ -265,27 +281,25 @@ def verify_claim_node(state: RAGState) -> dict:
         lines.append(
             f"Title: {r.get('title', '')}\n"
             f"URL: {r['url']}\n"
-            f"Snippet: {r.get('content', '')}\n"
+            f"Snippet: {r.get('content', '')[:300]}\n"
         )
 
     context = "\n".join(lines)
 
     prompt = (
         f"{CLAIM_ANALYSIS_PROMPT}\n\n"
-        f"Claim to verify:\n{claim}"
+        f"Claim to verify:\n{claim}\n\n"
         f"Search Results:\n{context}"
     )
-
     result: ClaimVerificationResult = verification_llm.invoke([
         {"role": "user", "content": prompt}
     ])
 
-    paper_dicts = [p.model_dump() for p in result.superseding_papers[:3]]
-
+    papers_dicts = [p.model_dump() for p in result.superseding_papers[:3]]
     return {
-        "claim_result": result.verdict_summary,
-        "claim_source": paper_dicts[0]["url"] if paper_dicts else None,
-        "superseding_papers": paper_dicts
+        "claim_verdict": result.verdict_summary,
+        "claim_source": papers_dicts[0]["url"] if papers_dicts else None,
+        "superseding_papers": papers_dicts,
     }
 
 
@@ -294,7 +308,7 @@ def generate_answer_node(state: RAGState) -> dict:
     query = state["query"]
 
     if route == "retrieve":
-        if state.get("is_relevant") is False and state.get("rewrite_count", 0) >=1:
+        if state.get("is_relevant") is False and state.get("rewrite_count", 0) >= 1:
             answer = (
                 "I wasn't able to find relevant information in the uploaded papers "
                 "to answer your question. You may want to rephrase your question "
@@ -308,16 +322,16 @@ def generate_answer_node(state: RAGState) -> dict:
                 context = "\n\n---\n\n".join(doc.page_content for doc in docs)
                 prompt = f"Answer the question using this context:\n\n{context}\n\nQuestion: {query}"
                 answer = llm.invoke([{"role": "user", "content": prompt}]).content
+
     elif route == "verify_claim":
         verdict = state.get("claim_verdict", "")
-        papers = state.get("superseing_papers") or []
-        claim_text = state['query']
+        papers = state.get("superseding_papers") or []
+        claim_text = state["query"]
         if papers:
             papers_block = "\n\n".join(
-                f"{i + 1}. **{p['title']}**\n  {p['summary']}\n  Link:{p["url"]}"
+                f"{i + 1}. **{p['title']}**\n   {p['summary']}\n   Link: {p['url']}"
                 for i, p in enumerate(papers)
             )
-
             answer = (
                 f"**Claim Verification Result**\n\n"
                 f"> {claim_text}\n\n"
@@ -334,20 +348,22 @@ def generate_answer_node(state: RAGState) -> dict:
                 f"**Verdict:** {verdict}\n\n"
                 f"*No papers directly superseding this claim were found in recent literature.*"
             )
-    else:
-        prompt = f"Answer from your knowledge. \n\nQuestion: {query}"
+
+    else:  # direct_answer
+        prompt = f"Answer from your knowledge.\n\nQuestion: {query}"
         answer = llm.invoke([{"role": "user", "content": prompt}]).content
 
-    return {"answer" : answer, "messages": [AIMessage(content=answer)]}
+    return {"answer": answer, "messages": [AIMessage(content=answer)]}
 
 
-
-# ==================== Graph ==================== #
+# ==================== Graph ====================
 
 MAX_RETRIEVAL_ATTEMPTS = 3
 
+
 def route_query(state: RAGState) -> str:
-    return state['route']
+    return state["route"]
+
 
 def agent_routing(state: RAGState) -> str:
     # Always execute pending tool calls first — shortcutting here would leave
@@ -358,7 +374,6 @@ def agent_routing(state: RAGState) -> str:
         return "retrieval"
     if state.get("retrieval_attempts", 0) >= MAX_RETRIEVAL_ATTEMPTS:
         return "generate_answer"
-
     return "relevancy_check"
 
 
@@ -368,6 +383,7 @@ def after_relevancy_routing(state: RAGState) -> str:
     if state.get("rewrite_count", 0) < 1:
         return "query_rewrite"
     return "generate_answer"
+
 
 def build_graph(db_path: str = "checkpoints.db"):
     conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -403,7 +419,7 @@ def build_graph(db_path: str = "checkpoints.db"):
             "generate_answer": "generate_answer",
         },
     )
-    graph.add_edge("retrieval","agent_node")
+    graph.add_edge("retrieval", "agent_node")
 
     graph.add_conditional_edges(
         "relevancy_check",
