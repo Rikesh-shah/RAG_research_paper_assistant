@@ -13,7 +13,7 @@ load_dotenv()
 
 # ==================== Config ==================== #
 
-EMBEDDING_DIM = 1536 # text-embedding-3-small
+EMBEDDING_DIM = 1536  # text-embedding-3-small
 
 # ==================== Singletons ==================== #
 
@@ -23,26 +23,29 @@ embeddings = CacheBackedEmbeddings.from_bytes_store(
     base_embeddings,
     embedding_file_store,
     namespace=base_embeddings.model,
-    query_embedding_cache = True,
-    key_encoder = "blake2b",
+    query_embedding_cache=True,
+    key_encoder="blake2b",
 )
 
 qdrant_client = QdrantClient(
-    url = os.environ['QDRANT_URL'],
-    api_key = os.environ['QDRANT_API_KEY'],
-    timeout = 120,
+    url=os.environ["QDRANT_URL"],
+    api_key=os.environ["QDRANT_API_KEY"],
+    timeout=120,
 )
 
-# ===================== Collection ==================== #
+
+# ==================== Collection ==================== #
+
 def get_collection_name(session_id: str) -> str:
-    return f"papeer_{session_id.replace("-", "_")}"
+    return f"papeer_{session_id.replace('-', '_')}"
+
 
 def get_vectorstore(session_id: str) -> QdrantVectorStore:
     collection_name = get_collection_name(session_id)
     if not qdrant_client.collection_exists(collection_name):
         qdrant_client.create_collection(
             collection_name=collection_name,
-            vector_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
+            vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
         )
     return QdrantVectorStore(
         client=qdrant_client,
@@ -51,10 +54,11 @@ def get_vectorstore(session_id: str) -> QdrantVectorStore:
     )
 
 
+# ==================== Public API ==================== #
 
-# ==================== Public API ===================== #
-def add_paper(doc: list[Document], session_id: str) -> None:
-    get_vectorstore(session_id).add_documents(doc)
+def add_paper(docs: list[Document], session_id: str) -> None:
+    get_vectorstore(session_id).add_documents(docs)
+
 
 def list_papers(session_id: str) -> list[str]:
     collection_name = get_collection_name(session_id)
@@ -78,7 +82,6 @@ def list_papers(session_id: str) -> list[str]:
         if offset is None:
             break
     return titles
-
 
 
 def search(query: str, session_id: str, k: int = 4) -> list[Document]:
