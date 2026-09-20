@@ -36,7 +36,7 @@ def handle_btw(query: str) -> Generator[str, None, None]:
         ])
     else:
         answer_prompt = ChatPromptTemplate.from_messages([
-            ("system", "Answer the question concisely from your general knowledge.")
+            ("system", "Answer the question concisely from your general knowledge."),
             ("human", "{query}"),
         ])
 
