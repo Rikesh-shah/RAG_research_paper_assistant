@@ -1,0 +1,20 @@
+{
+  "f401765a-56d4-4af0-bfbb-6b2b0bd2da79": {
+    "id": "f401765a-56d4-4af0-bfbb-6b2b0bd2da79",
+    "name": "Introduction to Neural Networks",
+    "created_at": "2026-09-20T15:13:44.507469",
+    "is_named": true
+  },
+  "7be21e62-54b6-4473-8168-38d4d022ed6b": {
+    "id": "7be21e62-54b6-4473-8168-38d4d022ed6b",
+    "name": "Recent Donald Trump News",
+    "created_at": "2026-09-20T16:55:11.256311",
+    "is_named": true
+  },
+  "59567fd4-10a8-4732-856a-c418f3f93aca": {
+    "id": "59567fd4-10a8-4732-856a-c418f3f93aca",
+    "name": "War start date",
+    "created_at": "2026-09-20T17:01:15.016705",
+    "is_named": true
+  }
+}
